@@ -6,13 +6,9 @@
  * cross-checking against the SAMG; the public accessors.
  */
 
-#define _FILE_OFFSET_BITS 64
-#define _POSIX_C_SOURCE 200809L
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
 
 #include "internal.h"
 
@@ -233,7 +229,7 @@ int audvd_open(const char *path, const audvd_open_opts *opts, audvd_disc **out)
         d->log_opaque = opts->log_opaque;
         d->flags      = opts->flags;
     }
-    d->aob_fp_ats = -1;
+    d->aob.ats = -1;
 
     d->dir = audvd_find_audio_ts(path);
     if (!d->dir) {
@@ -290,8 +286,7 @@ void audvd_close(audvd_disc *d)
 {
     if (!d)
         return;
-    if (d->aob_fp)
-        fclose(d->aob_fp);
+    audvd_aob_cache_close(&d->aob);
     for (int i = 0; i < AUDVD_MAX_ATS; i++)
         audvd_free_ats(&d->ats[i]);
     free(d->titles);
@@ -412,43 +407,5 @@ int audvd_samg_get_track(const audvd_disc *d, int i, audvd_samg_track *out)
 int audvd_read_aob_sectors(audvd_disc *d, int n, uint32_t sector,
                            int nb_sectors, uint8_t *buf)
 {
-    const audvd_ats *ats = get_ats(d, n);
-    int done = 0;
-
-    if (!ats || nb_sectors < 0)
-        return AUDVD_ERR_RANGE;
-
-    while (done < nb_sectors) {
-        uint64_t s = (uint64_t)sector + done;
-        int idx = 0, want;
-        size_t got;
-
-        while (idx < ats->nb_aob_files && s >= ats->aob_sectors[idx])
-            s -= ats->aob_sectors[idx++];
-        if (idx >= ats->nb_aob_files)
-            break;
-
-        if (!d->aob_fp || d->aob_fp_ats != n || d->aob_fp_index != idx) {
-            if (d->aob_fp)
-                fclose(d->aob_fp);
-            d->aob_fp = fopen(ats->aob_path[idx], "rb");
-            if (!d->aob_fp) {
-                d->aob_fp_ats = -1;
-                return done ? done : AUDVD_ERR_IO;
-            }
-            d->aob_fp_ats   = n;
-            d->aob_fp_index = idx;
-        }
-        want = nb_sectors - done;
-        if ((uint64_t)want > ats->aob_sectors[idx] - s)
-            want = (int)(ats->aob_sectors[idx] - s);
-        if (fseeko(d->aob_fp, (off_t)(s * AUDVD_SECTOR_SIZE), SEEK_SET))
-            return done ? done : AUDVD_ERR_IO;
-        got = fread(buf + (size_t)done * AUDVD_SECTOR_SIZE, AUDVD_SECTOR_SIZE,
-                    (size_t)want, d->aob_fp);
-        done += (int)got;
-        if (got != (size_t)want)
-            return done ? done : AUDVD_ERR_IO;
-    }
-    return done;
+    return audvd_aob_read(d, &d->aob, n, sector, nb_sectors, buf);
 }

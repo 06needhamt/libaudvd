@@ -62,10 +62,124 @@ static int downmix_used(const audvd_downmix *dm)
     return 0;
 }
 
+#define RUN_SECTORS 64
+
+/* Copy the AOB sectors of one track (title and track 1-based). */
+static int extract(audvd_disc *disc, int title, int track, const char *out)
+{
+    static uint8_t buf[RUN_SECTORS * AUDVD_SECTOR_SIZE];
+    audvd_reader *r;
+    audvd_pos pos;
+    uint64_t sectors = 0, scrambled = 0;
+    FILE *f;
+    int n, ret;
+
+    if ((ret = audvd_reader_open(disc, title - 1, &r)) < 0 ||
+        (ret = audvd_reader_set_tracks(r, track - 1, track - 1)) < 0) {
+        fprintf(stderr, "title %d track %d: %s\n", title, track, audvd_strerror(ret));
+        audvd_reader_close(r);
+        return 1;
+    }
+    f = strcmp(out, "-") ? fopen(out, "wb") : stdout;
+    if (!f) {
+        perror(out);
+        audvd_reader_close(r);
+        return 1;
+    }
+    while ((n = audvd_reader_read(r, buf, RUN_SECTORS, &pos)) > 0) {
+        if (pos.flags & AUDVD_POS_ENCRYPTED)
+            scrambled += (uint64_t)n;
+        if (fwrite(buf, AUDVD_SECTOR_SIZE, (size_t)n, f) != (size_t)n) {
+            perror(out);
+            n = AUDVD_ERR_IO;
+            break;
+        }
+        sectors += (uint64_t)n;
+    }
+    if (f != stdout)
+        fclose(f);
+    audvd_reader_close(r);
+    fprintf(stderr, "%llu sectors written", (unsigned long long)sectors);
+    if (scrambled)
+        fprintf(stderr, ", %llu of them CPPM-scrambled", (unsigned long long)scrambled);
+    fprintf(stderr, "\n");
+    if (n != AUDVD_ERR_EOF) {
+        fprintf(stderr, "read error: %s\n", audvd_strerror(n));
+        return 1;
+    }
+    return 0;
+}
+
+/* Read every audio-only title and summarise each track. */
+static int scan(audvd_disc *disc)
+{
+    static uint8_t buf[RUN_SECTORS * AUDVD_SECTOR_SIZE];
+    int status = 0;
+
+    for (int ti = 0; ti < audvd_num_titles(disc); ti++) {
+        audvd_reader *r;
+        audvd_pos pos;
+        int cur = -1, n;
+        uint64_t sectors = 0, scrambled = 0;
+        int64_t first = -1, last = -1;
+
+        if (audvd_reader_open(disc, ti, &r) < 0)
+            continue;
+        for (;;) {
+            n = audvd_reader_read(r, buf, RUN_SECTORS, &pos);
+            if ((n <= 0 || pos.track != cur) && cur >= 0) {
+                printf("title %d track %2d: %llu sectors, %llu scrambled, PTS ",
+                       ti + 1, cur + 1, (unsigned long long)sectors,
+                       (unsigned long long)scrambled);
+                if (first >= 0)
+                    printf("%lld-%lld\n", (long long)first, (long long)last);
+                else
+                    printf("none found\n");
+                sectors = scrambled = 0;
+                first = last = -1;
+            }
+            if (n <= 0)
+                break;
+            cur = pos.track;
+            sectors += (uint64_t)n;
+            if (pos.flags & AUDVD_POS_ENCRYPTED) {
+                scrambled += (uint64_t)n;
+                continue;
+            }
+            for (int k = 0; k < n; k++) {
+                int64_t pts = audvd_pack_pts(buf + (size_t)k * AUDVD_SECTOR_SIZE);
+                if (pts < 0)
+                    continue;
+                if (first < 0)
+                    first = pts;
+                last = pts;
+            }
+        }
+        if (n != AUDVD_ERR_EOF) {
+            fprintf(stderr, "title %d: %s\n", ti + 1, audvd_strerror(n));
+            status = 1;
+        }
+        audvd_reader_close(r);
+    }
+    return status;
+}
+
+static int usage(void)
+{
+    fprintf(stderr,
+            "usage: audvd-info [options] <disc or AUDIO_TS dir>\n"
+            "  -v, -v -v        list cells and the SAMG; log debug messages\n"
+            "  --no-amg         ignore AUDIO_TS.IFO\n"
+            "  --scan           read every track and summarise its packs\n"
+            "  -x T.N -o FILE   extract track N of title T (MPEG-PS; - for stdout)\n");
+    return 2;
+}
+
 int main(int argc, char **argv)
 {
     audvd_open_opts opts = { log_cb, NULL, 0 };
-    const char *path = NULL;
+    const char *path = NULL, *out = NULL;
+    int do_scan = 0, x_title = 0, x_track = 0;
     audvd_disc *disc;
     int ret;
 
@@ -74,20 +188,35 @@ int main(int argc, char **argv)
             verbose++;
         else if (!strcmp(argv[i], "--no-amg"))
             opts.flags |= AUDVD_OPEN_IGNORE_AMG;
+        else if (!strcmp(argv[i], "--scan"))
+            do_scan = 1;
+        else if (!strcmp(argv[i], "-x") && i + 1 < argc) {
+            if (sscanf(argv[++i], "%d.%d", &x_title, &x_track) != 2)
+                return usage();
+        } else if (!strcmp(argv[i], "-o") && i + 1 < argc)
+            out = argv[++i];
         else if (!path && argv[i][0] != '-')
             path = argv[i];
         else
-            path = NULL, i = argc;
+            return usage();
     }
-    if (!path) {
-        fprintf(stderr, "usage: audvd-info [-v [-v]] [--no-amg] <disc or AUDIO_TS dir>\n");
-        return 2;
-    }
+    if (!path || (x_title && !out))
+        return usage();
 
     ret = audvd_open(path, &opts, &disc);
     if (ret < 0) {
         fprintf(stderr, "%s: %s\n", path, audvd_strerror(ret));
         return 1;
+    }
+    if (x_title) {
+        ret = extract(disc, x_title, x_track, out);
+        audvd_close(disc);
+        return ret;
+    }
+    if (do_scan) {
+        ret = scan(disc);
+        audvd_close(disc);
+        return ret;
     }
 
     printf("groups: %d, titles: %d, ATS: %d, SAMG tracks: %d\n",

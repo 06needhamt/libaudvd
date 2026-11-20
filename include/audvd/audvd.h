@@ -294,6 +294,96 @@ AUDVD_API int audvd_read_aob_sectors(audvd_disc *disc, int ats,
                                      uint32_t sector, int nb_sectors,
                                      uint8_t *buf);
 
+/* ------------------------------------------------------------------ */
+/* Title reader                                                       */
+/* ------------------------------------------------------------------ */
+
+/** First sector of the selected track range. */
+#define AUDVD_POS_TITLE_START   0x01
+/** First sector of a track. */
+#define AUDVD_POS_TRACK_START   0x02
+/** First sector of a cell. */
+#define AUDVD_POS_CELL_START    0x04
+/**
+ * Timestamps do not continue from the previous run: a track whose AOB
+ * PTS restart (STC discontinuity), or the first run after a seek.
+ */
+#define AUDVD_POS_DISCONTINUITY 0x08
+/** The run is CPPM-scrambled and must not be decoded. */
+#define AUDVD_POS_ENCRYPTED     0x10
+
+/** Where a run of sectors returned by audvd_reader_read() comes from. */
+typedef struct audvd_pos {
+    int      track;            /**< 0-based within the title            */
+    int      cell;             /**< 0-based within the title            */
+    uint32_t sector;           /**< AOB-relative sector of the first one */
+    int      flags;            /**< AUDVD_POS_*, for the first sector   */
+    uint64_t track_start_pts;  /**< track start on the title timeline   */
+    uint32_t track_first_pts;  /**< PTS the track's AOB data starts at  */
+} audvd_pos;
+
+typedef struct audvd_reader audvd_reader;
+
+/**
+ * Open a reader on an audio-only title. Several readers may be used at
+ * once; all must be closed before the disc.
+ *
+ * @param title 0-based title index
+ */
+AUDVD_API int  audvd_reader_open(audvd_disc *disc, int title,
+                                 audvd_reader **out);
+AUDVD_API void audvd_reader_close(audvd_reader *r);
+
+/**
+ * Restrict reading to tracks first..last (0-based, inclusive) and rewind
+ * to the start of the first. The default is the whole title.
+ */
+AUDVD_API int audvd_reader_set_tracks(audvd_reader *r, int first, int last);
+
+/**
+ * Read the next run of sectors in play order. A run never crosses a cell
+ * boundary and is either entirely scrambled or entirely clear, so pos
+ * describes all of it.
+ *
+ * @return the number of sectors (1..max_sectors), AUDVD_ERR_EOF at the end
+ *         of the range, or another negative AUDVD_ERR_* code
+ */
+AUDVD_API int audvd_reader_read(audvd_reader *r, uint8_t *buf,
+                                int max_sectors, audvd_pos *pos);
+
+/** Position of the next run, without reading it. */
+AUDVD_API int audvd_reader_tell(const audvd_reader *r, audvd_pos *pos);
+
+/** Continue reading at the start of a track (0-based) within the range. */
+AUDVD_API int audvd_reader_seek_track(audvd_reader *r, int track);
+
+/**
+ * Continue reading at the last pack whose PTS is at or before a time on
+ * the title timeline. Falls back to interpolating within the track if
+ * its packs cannot be inspected (scrambled or unreadable).
+ *
+ * @param landed if not NULL, receives the title time of the pack landed on
+ */
+AUDVD_API int audvd_reader_seek_pts(audvd_reader *r, uint64_t title_pts,
+                                    uint64_t *landed);
+
+/* ------------------------------------------------------------------ */
+/* Pack inspection                                                    */
+/* ------------------------------------------------------------------ */
+
+/** Non-zero if the first PES packet of a 2048-byte pack is scrambled. */
+AUDVD_API int audvd_pack_is_scrambled(const uint8_t *pack);
+
+/** PTS of the first PES packet of a pack that has one, or -1. */
+AUDVD_API int64_t audvd_pack_pts(const uint8_t *pack);
+
+/**
+ * Convert a PTS found in the AOB data of a run to the title timeline,
+ * taking the per-track restart and 33-bit wrap-around into account.
+ * Returns -1 if pkt_pts is negative.
+ */
+AUDVD_API int64_t audvd_pos_title_pts(const audvd_pos *pos, int64_t pkt_pts);
+
 #ifdef __cplusplus
 }
 #endif

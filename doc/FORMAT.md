@@ -171,3 +171,42 @@ whole number of sectors. The absolute disc address of AOB sector 0
 (`aob_lba`) is not stored anywhere that libaudvd reads. It is recovered
 by matching the ATS tracks against SAMG entries with the same length and
 first PTS. The reference disc gives 1707.
+
+## AOB pack structure (`src/pack.c`)
+
+Each 2048-byte AOB sector is an MPEG-2 (or MPEG-1) program stream pack,
+as on DVD-Video:
+
+- a `00 00 01 BA` pack header, 14 bytes for an MPEG-2 pack (`4 bits
+  '01', SCR, mux rate, stuffing length in the low 3 bits of the last
+  byte`) or 12 bytes for MPEG-1 (`4 bits '0010'`, SCR, mux rate) [disc,
+  standard MPEG-2 PS layout];
+- optionally a `00 00 01 BB` system header;
+- one or more PES packets: `00 00 01 <stream id>`, u16 length, then for
+  an MPEG-2 PES (`'10'` in the top 2 bits of the next byte) the usual
+  flags, header-data length and optional PTS/DTS. Private stream 1
+  (`0xBD`, the LPCM/MLP audio) and padding (`0xBE`) are the only ones
+  libaudvd needs to walk past; a `0xB9` MPEG program end code stops the
+  walk.
+
+**Scrambling** [disc, matches the DVD-Video `PES_scrambling_control`
+field]: bits 5–4 of the PES flags byte (the byte right after the 16-bit
+PES length) are `00` for clear content and non-zero (`01`/`10`/`11`,
+depending on the key period) when the pack is CPPM-scrambled.
+`audvd_pack_is_scrambled()` reports any non-zero value; libaudvd never
+attempts to decrypt a scrambled pack.
+
+**PTS** [standard MPEG-2 PES, same 5-byte 33-bit layout as DVD-Video]:
+present when bit 7 of the flags byte is set and the header-data length
+is at least 5. The library reads the first PES in the pack that carries
+one. On the reference disc, every other audio pack omits the PTS
+(`audvd_pack_pts()` returns -1 for those); `audvd_reader_seek_pts()`
+probes forward up to 16 sectors to find one.
+
+Because a track's PTS restarts near its `first_pts` on every track (the
+PGI's STC-discontinuity bit, see above, is set on every track observed),
+a PTS read from a pack must be rebased onto the title timeline with
+`audvd_pos_title_pts()`: `title_pts = track_start_pts + ((pack_pts -
+track_first_pts) mod 2^33)`, taking the shorter way around the 33-bit
+wrap. This has not been exercised against a real wrap-around, since the
+reference disc's tracks are all far too short.

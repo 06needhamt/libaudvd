@@ -33,7 +33,18 @@ typedef struct synth_disc {
     int         with_video_title;
     int         lowercase;   /* lowercase file and directory names */
     uint32_t    aob_file_sectors[2]; /* sizes of ATS_01_1/2.AOB, 0 = none */
+    uint32_t    scrambled_first, scrambled_count; /* CPPM-flagged sectors */
 } synth_disc;
+
+/*
+ * AOB sectors are MPEG-2 PS packs holding one private stream 1 PES with
+ * the track's substream (0xa0 LPCM with a DVD-Audio header, or 0xa1 MLP).
+ * Even sectors of a track carry a PTS: first_pts + index * synth_pack_pts().
+ * The last 4 bytes of every pack are its AOB sector number.
+ */
+uint32_t synth_pack_pts(const synth_disc *s, int track);
+uint32_t synth_sector_number(const uint8_t *pack);
+void     synth_pack(const synth_disc *s, uint32_t sector, uint8_t *pack);
 
 /** A disc with three tracks; see synth.c for the values. */
 void synth_default(synth_disc *s);
@@ -45,7 +56,7 @@ uint8_t *synth_ats(const synth_disc *s, size_t *size);
 
 /**
  * Write the zone to <root>/AUDIO_TS (created). Pass a NULL image to skip a
- * file. AOB sector n starts with the big-endian 32-bit value n.
+ * file.
  */
 int synth_write_file(const char *path, const uint8_t *data, size_t size);
 int synth_write(const synth_disc *s, const char *root);

@@ -5,6 +5,14 @@ test_parse = executable('test_parse', 'test_parse.c',
 test('parse', test_parse,
   env : ['AUDVD_TEST_DISC=' + get_option('test_disc')])
 
+test_reader = executable('test_reader', 'test_reader.c',
+  dependencies : audvd_dep, link_with : synth)
+test('reader', test_reader)
+
+test_pack = executable('test_pack', 'test_pack.c',
+  dependencies : audvd_dep, link_with : synth)
+test('pack', test_pack)
+
 fuzz_smoke = executable('fuzz_smoke', 'fuzz_ifo.c',
   dependencies : audvd_dep, link_with : synth)
 test('fuzz-smoke', fuzz_smoke, args : ['3000'], timeout : 120)

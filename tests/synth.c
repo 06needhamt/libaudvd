@@ -203,6 +203,78 @@ uint8_t *synth_ats(const synth_disc *s, size_t *size)
     return b;
 }
 
+uint32_t synth_pack_pts(const synth_disc *s, int track)
+{
+    const synth_track *t = &s->tracks[track];
+    return t->length_pts / (t->nb_cells * t->cell_sectors);
+}
+
+uint32_t synth_sector_number(const uint8_t *p)
+{
+    p += SECTOR - 4;
+    return (uint32_t)p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3];
+}
+
+void synth_pack(const synth_disc *s, uint32_t sector, uint8_t *p)
+{
+    static const uint8_t pack_header[14] = {
+        0x00, 0x00, 0x01, 0xba, 0x44, 0x00, 0x04, 0x00, 0x04, 0x01,
+        0x01, 0x89, 0xc3, 0xf8,
+    };
+    int track = 0, has_pts;
+    uint32_t first = 0, last = 0, k, pts;
+    const synth_track *t;
+    const uint8_t *a;
+    uint8_t *q;
+
+    for (track = 0; track < s->nb_tracks; track++) {
+        track_sectors(s, track, &first, &last);
+        if (sector <= last)
+            break;
+    }
+    if (track == s->nb_tracks)
+        track = s->nb_tracks - 1;
+    t = &s->tracks[track];
+    a = s->attr[t->attr];
+    k = sector - first;
+    has_pts = !(k & 1);
+    pts = t->first_pts + k * synth_pack_pts(s, track);
+
+    memset(p, 0, SECTOR);
+    memcpy(p, pack_header, 14);
+    q = p + 14;
+    q[0] = 0x00; q[1] = 0x00; q[2] = 0x01; q[3] = 0xbd;
+    w16(q + 4, SECTOR - 20);
+    q[6] = 0x81;
+    if (sector >= s->scrambled_first &&
+        sector - s->scrambled_first < s->scrambled_count)
+        q[6] |= 0x10;
+    q[7] = has_pts ? 0x80 : 0x00;
+    q[8] = has_pts ? 5 : 0;
+    q += 9;
+    if (has_pts) {
+        q[0] = 0x21 | ((pts >> 29) & 0x0e);
+        q[1] = pts >> 22;
+        q[2] = ((pts >> 14) & 0xfe) | 1;
+        q[3] = pts >> 7;
+        q[4] = ((pts << 1) & 0xfe) | 1;
+        q += 5;
+    }
+    if (a[0] == 0x00) {
+        /* DVD-Audio LPCM: sub_stream_id and the private header */
+        q[0] = 0xa0;
+        q[3] = 8;                       /* private header length */
+        q[6] = t->dm_valid ? t->dm_table : 0;
+        q[7] = a[2];
+        q[8] = a[3];
+        q[10] = a[4];
+        q[11] = 0x80;                   /* unity dynamic range control */
+    } else {
+        q[0] = 0xa1;
+    }
+    w32(p + SECTOR - 4, sector);
+}
+
 int synth_write_file(const char *path, const uint8_t *data, size_t size)
 {
     FILE *f = fopen(path, "wb");
@@ -259,7 +331,7 @@ int synth_write(const synth_disc *s, const char *root)
         if (!aob)
             return -1;
         for (uint32_t k = 0; k < s->aob_file_sectors[f]; k++)
-            w32(aob + (size_t)k * SECTOR, sector++);
+            synth_pack(s, sector++, aob + (size_t)k * SECTOR);
         snprintf(name, sizeof(name), "ATS_01_%d.AOB", f + 1);
         ret |= write_named(s, dir, name, aob, (size_t)s->aob_file_sectors[f] * SECTOR);
         free(aob);

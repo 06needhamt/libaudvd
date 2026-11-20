@@ -246,14 +246,14 @@ static void test_read_aob(void)
     CHECK_EQ(audvd_read_aob_sectors(d, 1, 8, 4, buf), 4);
     for (int i = 0; i < 4; i++) {
         const uint8_t *p = buf + (size_t)i * AUDVD_SECTOR_SIZE;
-        CHECK_EQ((p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3]), 8 + i);
+        CHECK_EQ(synth_sector_number(p), 8 + i);
     }
     /* short read at the end, then nothing */
     CHECK_EQ(audvd_read_aob_sectors(d, 1, 20, 10, buf), 4);
-    CHECK_EQ(buf[3 * AUDVD_SECTOR_SIZE + 3], 23);
+    CHECK_EQ(synth_sector_number(buf + 3 * AUDVD_SECTOR_SIZE), 23);
     CHECK_EQ(audvd_read_aob_sectors(d, 1, 24, 1, buf), 0);
     CHECK_EQ(audvd_read_aob_sectors(d, 1, 0, 24, buf), 24);
-    CHECK_EQ(buf[23 * AUDVD_SECTOR_SIZE + 3], 23);
+    CHECK_EQ(synth_sector_number(buf + 23 * AUDVD_SECTOR_SIZE), 23);
     CHECK_EQ(audvd_read_aob_sectors(d, 3, 0, 1, buf), AUDVD_ERR_RANGE);
     close_synth(d, root);
     free(buf);

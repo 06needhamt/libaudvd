@@ -3,7 +3,8 @@
  * -Dfuzzer=true, otherwise as a deterministic mutation smoke test.
  *
  * The first input byte picks the file that is replaced (AMG, SAMG or
- * ATS IFO) in an otherwise valid synthetic zone; the rest is its content.
+ * ATS IFO) in an otherwise valid synthetic zone, the rest being its
+ * content; or, for 3, the input is a pack for the pack inspection code.
  * SPDX-License-Identifier: LGPL-2.1-or-later
  */
 
@@ -57,6 +58,35 @@ static void walk(audvd_disc *d)
         audvd_samg_track st;
         audvd_samg_get_track(d, i, &st);
     }
+    for (int i = 0; i < audvd_num_titles(d); i++) {
+        audvd_reader *r;
+        audvd_title t;
+        audvd_pos pos;
+
+        if (audvd_reader_open(d, i, &r) != AUDVD_OK)
+            continue;
+        audvd_get_title(d, i, &t);
+        /* bounded: cell tables may describe huge ranges */
+        for (int k = 0; k < 64 && audvd_reader_read(r, buf, 2, &pos) > 0; k++)
+            ;
+        for (uint64_t pts = 0; pts < t.length_pts; pts += t.length_pts / 7 + 1) {
+            if (audvd_reader_seek_pts(r, pts, NULL) == AUDVD_OK)
+                audvd_reader_read(r, buf, 2, &pos);
+        }
+        audvd_reader_seek_track(r, t.nb_tracks - 1);
+        audvd_reader_read(r, buf, 2, &pos);
+        audvd_reader_close(r);
+    }
+}
+
+static void fuzz_pack(const uint8_t *data, size_t size)
+{
+    uint8_t pack[AUDVD_SECTOR_SIZE] = { 0 };
+    audvd_pos pos = { 0 };
+
+    memcpy(pack, data, size < sizeof(pack) ? size : sizeof(pack));
+    audvd_pack_is_scrambled(pack);
+    audvd_pos_title_pts(&pos, audvd_pack_pts(pack));
 }
 
 static void fuzz_one(const uint8_t *data, size_t size)
@@ -67,8 +97,12 @@ static void fuzz_one(const uint8_t *data, size_t size)
 
     if (size < 1)
         return;
+    if (data[0] % 4 == 3) {
+        fuzz_pack(data + 1, size - 1);
+        return;
+    }
     setup();
-    snprintf(path, sizeof(path), "%s/AUDIO_TS/%s", root, names[data[0] % 3]);
+    snprintf(path, sizeof(path), "%s/AUDIO_TS/%s", root, names[data[0] % 4]);
     if (synth_write_file(path, data + 1, size - 1))
         abort();
     if (audvd_open(root, &o, &d) == AUDVD_OK) {
@@ -129,6 +163,15 @@ int main(int argc, char **argv)
             snprintf(path, sizeof(path), "%s/AUDIO_TS/%s", root, names[f]);
             synth_write_file(path, img[f], size[f]);
         }
+    }
+    for (int it = 0; it < iterations; it++) {
+        uint8_t m[1 + AUDVD_SECTOR_SIZE];
+
+        m[0] = 3;
+        synth_pack(&s, (uint32_t)(it % 24), m + 1);
+        for (int k = 0; k < 1 + (int)(rnd() % 6); k++)
+            m[1 + (rnd() % 64 < 48 ? rnd() % 40 : rnd() % AUDVD_SECTOR_SIZE)] = (uint8_t)rnd();
+        fuzz_one(m, sizeof(m));
     }
     for (int f = 0; f < 3; f++)
         free(img[f]);

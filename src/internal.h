@@ -79,6 +79,11 @@ typedef struct audvd_title_int {
     audvd_pgc  *pgc;          /* NULL for audio-with-video titles */
 } audvd_title_int;
 
+typedef struct audvd_aob_cache {
+    FILE *fp;
+    int   ats, index;
+} audvd_aob_cache;
+
 struct audvd_disc {
     audvd_log_cb log;
     void        *log_opaque;
@@ -96,9 +101,8 @@ struct audvd_disc {
     int               nb_samg_tracks;
     audvd_samg_track *samg_tracks;
 
-    /* open AOB file cache for audvd_read_aob_sectors() */
-    FILE        *aob_fp;
-    int          aob_fp_ats, aob_fp_index;
+    /* open AOB file for audvd_read_aob_sectors() */
+    audvd_aob_cache aob;
 };
 
 /* log.c */
@@ -113,6 +117,11 @@ int   audvd_load_ifo(audvd_disc *d, const char *base, int backup,
                      audvd_buf *out, uint8_t **owned);
 int   audvd_file_sectors(const char *path, uint32_t *sectors);
 char *audvd_strdup(const char *s);
+
+/* aob.c */
+void audvd_aob_cache_close(audvd_aob_cache *c);
+int  audvd_aob_read(const audvd_disc *d, audvd_aob_cache *c, int ats,
+                    uint32_t sector, int nb_sectors, uint8_t *buf);
 
 /* attr.c */
 void audvd_decode_attr_bytes(uint8_t quant, uint8_t rate, uint8_t ca,
