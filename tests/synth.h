@@ -20,6 +20,7 @@ typedef struct synth_track {
     int      attr;          /* ATRN */
     int      dm_table;
     int      dm_valid;
+    int      dm_prohibited;
 } synth_track;
 
 typedef struct synth_disc {

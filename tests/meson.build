@@ -13,6 +13,9 @@ test_pack = executable('test_pack', 'test_pack.c',
   dependencies : audvd_dep, link_with : synth)
 test('pack', test_pack)
 
+# builds test discs from real audio, see the file header
+executable('mkdisc', 'mkdisc.c', dependencies : audvd_dep, link_with : synth)
+
 fuzz_smoke = executable('fuzz_smoke', 'fuzz_ifo.c',
   dependencies : audvd_dep, link_with : synth)
 test('fuzz-smoke', fuzz_smoke, args : ['3000'], timeout : 120)

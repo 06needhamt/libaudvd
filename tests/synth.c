@@ -37,9 +37,9 @@ void synth_default(synth_disc *s)
 
     memset(s, 0, sizeof(*s));
     s->nb_tracks = 3;
-    s->tracks[0] = (synth_track){ 900000, 94, 1, 10, 0, 2, 1 };
-    s->tracks[1] = (synth_track){ 450000, 100, 2, 5, 0, 0, 0 };
-    s->tracks[2] = (synth_track){ 90000, 85, 1, 4, 1, 0, 0 };
+    s->tracks[0] = (synth_track){ 900000, 94, 1, 10, 0, 2, 1, 0 };
+    s->tracks[1] = (synth_track){ 450000, 100, 2, 5, 0, 0, 0, 0 };
+    s->tracks[2] = (synth_track){ 90000, 85, 1, 4, 1, 0, 0, 0 };
     memcpy(s->attr[0], (uint8_t[5]){ 0x00, 0x00, 0x22, 0x00, 0x14 }, 5);
     memcpy(s->attr[1], (uint8_t[5]){ 0x01, 0x00, 0x2f, 0x1f, 0x01 }, 5);
     memcpy(s->dm_codes[2], dm2, sizeof(dm2));
@@ -186,7 +186,7 @@ uint8_t *synth_ats(const synth_disc *s, size_t *size)
         uint8_t *e = pgc + track_off + 20 * i;
 
         e[0] = (i ? 0 : 0x80) | 0x40 | (tr->attr << 3);
-        e[1] = tr->dm_valid ? tr->dm_table : 0x10;
+        e[1] = (tr->dm_valid ? tr->dm_table : 0x10) | (tr->dm_prohibited ? 0x20 : 0);
         e[4] = cell + 1;
         w32(e + 6, tr->first_pts);
         w32(e + 10, tr->length_pts);
