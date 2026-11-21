@@ -2,7 +2,7 @@
  * mkdisc: build a small DVD-Audio zone from real audio, to test players
  * and demuxers end to end (not installed).
  *
- *   mkdisc OUTDIR [-s FIRST:COUNT] TRACK...
+ *   mkdisc OUTDIR [-s FIRST:COUNT] [-p] TRACK...
  *
  * TRACK is one of
  *   lpcm:FILE:CA:RATE:BITS[:DM]  FILE: raw signed big-endian 24-bit samples,
@@ -13,7 +13,9 @@
  * DM selects the downmix flags of an LPCM track: "dm" (table 1, valid,
  * the default), "nodm" (coefficients not valid) or "prohibited".
  * -s marks AOB sectors FIRST..FIRST+COUNT-1 as CPPM-scrambled (only the
- * PES flag; the data stays clear).
+ * PES flag; the data stays clear). -p puts a PTS only on every other LPCM
+ * pack, as some discs do. Up to two distinct audio attributes (codec and
+ * parameters) can be used on one disc.
  *
  * Downmix table 1: L -> L and R -> R at 0 dB, Ls -> L and Rs -> R at -6 dB,
  * C -> L and R at -3 dB, LFE and S muted.
@@ -44,6 +46,7 @@ typedef struct track_spec {
 static uint8_t *aob;
 static uint32_t aob_sectors;
 static uint32_t scr_first = UINT32_MAX, scr_count;
+static int sparse_pts;
 
 static void w16(uint8_t *p, unsigned v) { p[0] = v >> 8; p[1] = v; }
 
@@ -183,9 +186,11 @@ static uint32_t put_lpcm(const track_spec *t, int dm_table, uint32_t *length_pts
     if (2008 - per_pack * block && 2008 - per_pack * block < 6)
         per_pack--;
 
-    while (f < frames) {
+    for (int pack = 0; f < frames; pack++) {
         uint8_t *p = next_sector();
-        uint8_t *q = begin_pack(p, PTS_START + (int64_t)(f * 90000 / (size_t)t->rate), 0xa0);
+        int64_t pts = sparse_pts && (pack & 1) ? -1
+                    : PTS_START + (int64_t)(f * 90000 / (size_t)t->rate);
+        uint8_t *q = begin_pack(p, pts, 0xa0);
         int nb = 0;
 
         q[2] = 8;                           /* private header length */
@@ -299,7 +304,7 @@ int main(int argc, char **argv)
     };
     synth_disc s;
     track_spec tracks[SYNTH_MAX_TRACKS];
-    int nb = 0, have[2] = { 0, 0 };
+    int nb = 0, nb_attrs = 0;
     const char *out;
     char path[1024];
     int argi = 2;
@@ -307,10 +312,15 @@ int main(int argc, char **argv)
     if (argc < 3)
         goto usage;
     out = argv[1];
-    if (!strcmp(argv[argi], "-s") && argi + 1 < argc) {
-        if (sscanf(argv[argi + 1], "%u:%u", &scr_first, &scr_count) != 2)
+    for (; argi < argc && argv[argi][0] == '-'; argi++) {
+        if (!strcmp(argv[argi], "-s") && argi + 1 < argc) {
+            if (sscanf(argv[++argi], "%u:%u", &scr_first, &scr_count) != 2)
+                goto usage;
+        } else if (!strcmp(argv[argi], "-p")) {
+            sparse_pts = 1;
+        } else {
             goto usage;
-        argi += 2;
+        }
     }
     for (; argi < argc; argi++) {
         if (nb == SYNTH_MAX_TRACKS || parse_track(argv[argi], &tracks[nb]) < 0)
@@ -336,7 +346,7 @@ int main(int argc, char **argv)
     for (int i = 0; i < nb; i++) {
         const track_spec *t = &tracks[i];
         synth_track *st = &s.tracks[i];
-        int a = t->mlp;
+        int a;
         uint8_t attr[5] = {
             (uint8_t)t->mlp, 0,
             (uint8_t)(t->mlp || t->bits == 24 ? 0x22 : 0x00),
@@ -345,13 +355,15 @@ int main(int argc, char **argv)
         };
         uint32_t len;
 
-        if (have[a] && memcmp(s.attr[a], attr, 5)) {
-            fprintf(stderr, "all %s tracks must share their parameters\n",
-                    a ? "MLP" : "LPCM");
-            return 1;
+        for (a = 0; a < nb_attrs && memcmp(s.attr[a], attr, 5); a++)
+            ;
+        if (a == nb_attrs) {
+            if (nb_attrs == 2) {
+                fprintf(stderr, "at most two distinct audio attributes per disc\n");
+                return 1;
+            }
+            memcpy(s.attr[nb_attrs++], attr, 5);
         }
-        memcpy(s.attr[a], attr, 5);
-        have[a] = 1;
 
         st->cell_sectors  = t->mlp ? put_mlp(t, &len) : put_lpcm(t, t->dm_valid ? 1 : 0, &len);
         st->length_pts    = len;
@@ -378,7 +390,7 @@ int main(int argc, char **argv)
     return 0;
 
 usage:
-    fprintf(stderr, "usage: mkdisc OUTDIR [-s FIRST:COUNT] "
+    fprintf(stderr, "usage: mkdisc OUTDIR [-s FIRST:COUNT] [-p] "
             "lpcm:FILE:CA:RATE:BITS[:dm|nodm|prohibited] | mlp:FILE:CA:RATE ...\n");
     return 2;
 }
