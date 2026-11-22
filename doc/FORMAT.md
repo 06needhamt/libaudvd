@@ -172,6 +172,12 @@ whole number of sectors. The absolute disc address of AOB sector 0
 by matching the ATS tracks against SAMG entries with the same length and
 first PTS. The reference disc gives 1707.
 
+File sizes are not fixed at 1 GiB. On the reference disc, `ATS_01_4.AOB`
+starts at AOB sector 1572816, so the first three files are 524272 sectors
+each (1 GiB − 32 KiB). libaudvd therefore takes every file's size from the
+file system rather than assuming one. All four files together end exactly
+at the title's last cell sector.
+
 ## AOB pack structure (`src/pack.c`)
 
 Each 2048-byte AOB sector is an MPEG-2 (or MPEG-1) program stream pack,
@@ -210,3 +216,12 @@ a PTS read from a pack must be rebased onto the title timeline with
 track_first_pts) mod 2^33)`, taking the shorter way around the 33-bit
 wrap. This has not been exercised against a real wrap-around, since the
 reference disc's tracks are all far too short.
+
+On the reference disc's `ATS_01_4.AOB` (tracks 15 end, 16–18), no pack is
+scrambled. Each track's PTS restarts at 94 (85 on the 48 kHz stereo
+track 18), and the PTS restarts sit exactly on the IFO's cell boundaries.
+The PES PTS values are rounded to whole 90 kHz ticks, so FFmpeg's MLP
+parser, which interpolates 75 ticks per 80-sample unit, sometimes runs
+one tick ahead of the next coded PTS. That is a property of the stream
+(the stock `mpeg` demuxer shows the same) and does not affect the decoded
+audio.
