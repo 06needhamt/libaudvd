@@ -1,0 +1,17 @@
+/*
+ * libaudvd - DVD-Audio navigation library
+ * SPDX-License-Identifier: LGPL-2.1-or-later
+ */
+
+#ifndef AUDVD_VERSION_H
+#define AUDVD_VERSION_H
+
+#define AUDVD_VERSION_MAJOR @AUDVD_VERSION_MAJOR@
+#define AUDVD_VERSION_MINOR @AUDVD_VERSION_MINOR@
+#define AUDVD_VERSION_MICRO @AUDVD_VERSION_MICRO@
+
+#define AUDVD_VERSION_INT(a, b, c) (((a) << 16) | ((b) << 8) | (c))
+#define AUDVD_VERSION \
+    AUDVD_VERSION_INT(AUDVD_VERSION_MAJOR, AUDVD_VERSION_MINOR, AUDVD_VERSION_MICRO)
+
+#endif /* AUDVD_VERSION_H */

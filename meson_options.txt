@@ -1,0 +1,4 @@
+option('tools', type : 'boolean', value : true, description : 'Build audvd-info')
+option('tests', type : 'boolean', value : true, description : 'Build the test suite')
+option('fuzzer', type : 'boolean', value : false, description : 'Build the libFuzzer harness (needs clang)')
+option('test_disc', type : 'string', value : '', description : 'Real DVD-Audio disc or rip to run the structural tests on')
